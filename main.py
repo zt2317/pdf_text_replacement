@@ -13,11 +13,11 @@ def resource_path(relative_path):
     base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base_path, relative_path)
 
-def list_config_files(config_dir):
-    return [f for f in os.listdir(resource_path(config_dir)) if f.endswith('.json')]
+def list_config_files():
+    return [f for f in os.listdir(resource_path('configs')) if f.endswith('.json')]
 
-def select_config(config_dir):
-    configs = list_config_files(config_dir)
+def select_config():
+    configs = list_config_files()
     if not configs:
         print('No config files found.')
         exit(1)
@@ -28,7 +28,7 @@ def select_config(config_dir):
     if choice < 0 or choice >= len(configs):
         print('Invalid choice.')
         exit(1)
-    return os.path.join(resource_path(config_dir), configs[choice])
+    return os.path.join('configs', configs[choice])
 
 def load_config(config_path):
     with open(resource_path(config_path), 'r', encoding='utf-8') as f:
@@ -149,8 +149,7 @@ def process_pdfs(pdf_dir, replacements):
             replace_text_in_pdf(input_pdf, output_pdf, replacements)
 
 def main():
-    config_dir = 'configs'
-    config_path = select_config(config_dir)
+    config_path = select_config()
     config = load_config(config_path)
     print(f"Loaded config: {config}")
     pdf_dir = os.path.dirname(__file__)
@@ -164,8 +163,7 @@ def run_qt_gui():
     window.setGeometry(200, 200, 600, 350)
 
     # 配置文件下拉
-    config_dir = 'configs'
-    configs = [f for f in os.listdir(resource_path(config_dir)) if f.endswith('.json')]
+    configs = list_config_files()
     config_label = QLabel('选择配置文件:')
     config_combo = QComboBox()
     config_combo.addItems(configs)
@@ -199,7 +197,7 @@ def run_qt_gui():
         if not config_file or not pdf_dir:
             QMessageBox.critical(window, '错误', '请先选择配置文件和PDF目录')
             return
-        config_path = os.path.join(resource_path(config_dir), config_file)
+        config_path = os.path.join('configs', config_file)
         output_dir = os.path.join(pdf_dir, 'output')
         os.makedirs(output_dir, exist_ok=True)
         config = load_config(config_path)
