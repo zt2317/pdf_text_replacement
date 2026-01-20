@@ -1,0 +1,43 @@
+name: Build EXE and Zip
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Build exe with PyInstaller
+      run: |
+        pyinstaller --onefile --add-data "configs;configs" --add-data "fonts;fonts" main.py
+
+    - name: Copy configs and fonts to dist
+      run: |
+        xcopy configs dist\configs /E /I
+        xcopy fonts dist\fonts /E /I
+
+    - name: Zip exe and directories
+      run: |
+        cd dist
+        powershell Compress-Archive -Path main.exe,configs,fonts -DestinationPath pdf_tool.zip
+
+    - name: Upload zip artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: pdf_tool
+        path: dist/pdf_tool.zip
