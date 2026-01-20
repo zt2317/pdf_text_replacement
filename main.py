@@ -9,12 +9,31 @@ from PyQt5.QtCore import Qt
 import threading
 
 def resource_path(relative_path):
-    """ Get the absolute path to the resource, works for both development and PyInstaller """
-    base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(base_path, relative_path)
+    # 增强调试日志，显示 base_path、exe 路径、relative_path
+    if hasattr(sys, '_MEIPASS'):
+        base_path = sys._MEIPASS
+        print(f"[DEBUG] sys._MEIPASS 存在: {base_path}")
+    else:
+        base_path = os.path.dirname(os.path.abspath(sys.argv[0]))
+        print(f"[DEBUG] sys._MEIPASS 不存在，使用 exe 路径: {base_path}")
+    abs_path = os.path.join(base_path, relative_path)
+    print(f"[DEBUG] resource_path('{relative_path}') => {abs_path}")
+    return abs_path
 
 def list_config_files():
-    return [f for f in os.listdir(resource_path('configs')) if f.endswith('.json')]
+    config_dir_path = resource_path('configs')
+    print(f"[启动] 扫描配置目录: {config_dir_path}")
+    parent_dir = os.path.dirname(config_dir_path)
+    if os.path.exists(parent_dir):
+        print(f"[启动] 配置目录父目录内容: {os.listdir(parent_dir)}")
+    else:
+        print(f"[启动] 配置目录父目录不存在: {parent_dir}")
+    if not os.path.exists(config_dir_path):
+        print(f"[启动] 配置目录不存在: {config_dir_path}")
+        return []
+    files = [f for f in os.listdir(config_dir_path) if f.endswith('.json')]
+    print(f"[启动] 发现配置文件: {files}")
+    return files
 
 def select_config():
     configs = list_config_files()
@@ -31,7 +50,11 @@ def select_config():
     return os.path.join('configs', configs[choice])
 
 def load_config(config_path):
-    with open(resource_path(config_path), 'r', encoding='utf-8') as f:
+    abs_path = resource_path(config_path)
+    print(f"[DEBUG] 尝试加载配置文件: {abs_path}")
+    if not os.path.exists(abs_path):
+        print(f"[ERROR] 配置文件不存在: {abs_path}")
+    with open(abs_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 def replace_text_in_pdf(input_pdf, output_pdf, replacements):
