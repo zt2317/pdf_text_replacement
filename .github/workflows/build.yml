@@ -37,7 +37,7 @@ jobs:
         powershell Compress-Archive -Path main.exe,configs,fonts -DestinationPath pdf_tool.zip
 
     - name: Upload zip artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: pdf_tool
         path: dist/pdf_tool.zip
