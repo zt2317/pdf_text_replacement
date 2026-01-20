@@ -9,13 +9,8 @@ from PyQt5.QtCore import Qt
 import threading
 
 def resource_path(relative_path):
-    # 增强调试日志，显示 base_path、exe 路径、relative_path
-    if hasattr(sys, '_MEIPASS'):
-        base_path = sys._MEIPASS
-        print(f"[DEBUG] sys._MEIPASS 存在: {base_path}")
-    else:
-        base_path = os.path.dirname(os.path.abspath(sys.argv[0]))
-        print(f"[DEBUG] sys._MEIPASS 不存在，使用 exe 路径: {base_path}")
+    # 始终使用 exe 所在目录，确保读取 exe 同级 configs
+    base_path = os.path.dirname(os.path.abspath(sys.argv[0]))
     abs_path = os.path.join(base_path, relative_path)
     print(f"[DEBUG] resource_path('{relative_path}') => {abs_path}")
     return abs_path

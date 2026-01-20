@@ -24,7 +24,7 @@ jobs:
 
     - name: Build exe with PyInstaller
       run: |
-        pyinstaller --onefile --add-data "configs;configs" --add-data "fonts;fonts" main.py
+        pyinstaller --onefile --add-data "fonts;fonts" main.py
 
     - name: Copy configs and fonts to dist
       run: |
