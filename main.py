@@ -8,8 +8,13 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 import threading
 
+def resource_path(relative_path):
+    """ Get the absolute path to the resource, works for both development and PyInstaller """
+    base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_path, relative_path)
+
 def list_config_files(config_dir):
-    return [f for f in os.listdir(config_dir) if f.endswith('.json')]
+    return [f for f in os.listdir(resource_path(config_dir)) if f.endswith('.json')]
 
 def select_config(config_dir):
     configs = list_config_files(config_dir)
@@ -23,15 +28,15 @@ def select_config(config_dir):
     if choice < 0 or choice >= len(configs):
         print('Invalid choice.')
         exit(1)
-    return os.path.join(config_dir, configs[choice])
+    return os.path.join(resource_path(config_dir), configs[choice])
 
 def load_config(config_path):
-    with open(config_path, 'r', encoding='utf-8') as f:
+    with open(resource_path(config_path), 'r', encoding='utf-8') as f:
         return json.load(f)
 
 def replace_text_in_pdf(input_pdf, output_pdf, replacements):
     doc = fitz.open(input_pdf)
-    fonts_dir = os.path.join(os.path.dirname(__file__), 'fonts')
+    fonts_dir = resource_path('fonts')
     # 收集所有待替换项（不分replacement顺序），并按y0从大到小排序，确保从下往上依次涂白替换
     all_replacements = []
     processed_bboxes = set()
@@ -144,7 +149,7 @@ def process_pdfs(pdf_dir, replacements):
             replace_text_in_pdf(input_pdf, output_pdf, replacements)
 
 def main():
-    config_dir = os.path.join(os.path.dirname(__file__), 'configs')
+    config_dir = 'configs'
     config_path = select_config(config_dir)
     config = load_config(config_path)
     print(f"Loaded config: {config}")
@@ -159,8 +164,8 @@ def run_qt_gui():
     window.setGeometry(200, 200, 600, 350)
 
     # 配置文件下拉
-    config_dir = os.path.join(os.path.dirname(__file__), 'configs')
-    configs = [f for f in os.listdir(config_dir) if f.endswith('.json')]
+    config_dir = 'configs'
+    configs = [f for f in os.listdir(resource_path(config_dir)) if f.endswith('.json')]
     config_label = QLabel('选择配置文件:')
     config_combo = QComboBox()
     config_combo.addItems(configs)
@@ -194,7 +199,7 @@ def run_qt_gui():
         if not config_file or not pdf_dir:
             QMessageBox.critical(window, '错误', '请先选择配置文件和PDF目录')
             return
-        config_path = os.path.join(config_dir, config_file)
+        config_path = os.path.join(resource_path(config_dir), config_file)
         output_dir = os.path.join(pdf_dir, 'output')
         os.makedirs(output_dir, exist_ok=True)
         config = load_config(config_path)
