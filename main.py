@@ -1,12 +1,18 @@
 import os
+import os
 import json
 import fitz
 import sys
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QComboBox, QPushButton, QTextEdit, QVBoxLayout, QHBoxLayout, QFileDialog, QMessageBox, QLineEdit
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal, QObject
 import threading
+
+
+class WorkerSignals(QObject):
+    log = pyqtSignal(str)
+    finished = pyqtSignal()
 
 def resource_path(relative_path):
     # 始终使用 exe 所在目录，确保读取 exe 同级 configs
@@ -52,110 +58,152 @@ def load_config(config_path):
     with open(abs_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
+def verify_and_clean_pdf(pdf_path, replacements):
+    """验证PDF并清理残留的原始文本"""
+    try:
+        temp_doc = fitz.open(pdf_path)
+        cleaned = False
+        
+        for page_num in range(len(temp_doc)):
+            page = temp_doc[page_num]
+            
+            # 检查是否还能找到原始文本
+            for replacement in replacements:
+                old_text = replacement['old_text']
+                
+                # 搜索文本实例
+                text_instances = page.search_for(old_text)
+                if text_instances:
+                    print(f"[WARNING] 在页面 {page_num} 仍找到原始文本: '{old_text}'")
+                    cleaned = True
+                    
+                    # 对每个找到的实例进行彻底清理
+                    for inst in text_instances:
+                        # 方法1: 多层白色覆盖
+                        padding = 3
+                        cover_rect = fitz.Rect(
+                            inst.x0 - padding, inst.y0 - padding,
+                            inst.x1 + padding, inst.y1 + padding
+                        )
+                        
+                        # 第一层：纯白覆盖
+                        page.draw_rect(cover_rect, color=(1,1,1), fill=(1,1,1), width=0, overlay=True)
+                        
+                        # 第二层：背景色覆盖（假设白色背景）
+                        page.draw_rect(cover_rect, color=(1,1,1), fill=(1,1,1), width=0, overlay=True)
+                        
+                        # 第三层：使用空白字符填充
+                        blank_text = " " * len(old_text)
+                        page.insert_text(
+                            (inst.x0, inst.y1),
+                            blank_text,
+                            fontname="Helvetica",
+                            fontsize=12,
+                            color=(1,1,1)
+                        )
+                        
+                        # 第四层：再次覆盖
+                        page.draw_rect(cover_rect, color=(1,1,1), fill=(1,1,1), width=0, overlay=True)
+                        
+                        # 第五层：添加标记
+                        page.insert_text(
+                            (inst.x0, inst.y1 + 15),
+                            "[已清除]",
+                            fontname="Helvetica",
+                            fontsize=6,
+                            color=(0.8, 0.8, 0.8)
+                        )
+        
+        if cleaned:
+            print("[INFO] 清理了残留的原始文本")
+            temp_doc.save(pdf_path, garbage=5, deflate=True, clean=2, incremental=False)
+        else:
+            print("[INFO] 验证通过，未发现残留原始文本")
+            temp_doc.save(pdf_path, garbage=4, deflate=True, clean=1)
+        
+        temp_doc.close()
+        return cleaned
+    except Exception as e:
+        print(f"[ERROR] 验证和清理失败: {e}")
+        return False
+
 def replace_text_in_pdf(input_pdf, output_pdf, replacements):
+    """使用redaction彻底删除原始文本，确保不可恢复"""
     doc = fitz.open(input_pdf)
     fonts_dir = resource_path('fonts')
-    # 收集所有待替换项（不分replacement顺序），并按y0从大到小排序，确保从下往上依次涂白替换
-    all_replacements = []
-    processed_bboxes = set()
-    for replacement in replacements:
-        old_text = replacement['old_text']
-        new_text = replacement['new_text']
-        for page_num in range(len(doc)):
-            page = doc[page_num]
+    
+    for page_num in range(len(doc)):
+        page = doc[page_num]
+        page_replacements = []
+        
+        for replacement in replacements:
+            old_text = replacement['old_text']
+            new_text = replacement['new_text']
             text_instances = page.search_for(old_text)
             text_dict = page.get_text("dict")
+            
             for inst in text_instances:
-                inst_tuple = (page_num, round(inst.x0, 2), round(inst.y0, 2), round(inst.x1, 2), round(inst.y1, 2))
-                if inst_tuple in processed_bboxes:
-                    continue
-                # 取出该区域的原始文本，确保包含old_text才收集
-                extracted_text = page.get_textbox(inst).strip()
-                if old_text not in extracted_text:
-                    continue
-                processed_bboxes.add(inst_tuple)
                 matched_span = None
-                for block in text_dict["blocks"]:
-                    if "lines" in block:
+                if "blocks" in text_dict:
+                    for block in text_dict["blocks"]:
+                        if "lines" not in block:
+                            continue
                         for line in block["lines"]:
                             for span in line["spans"]:
                                 span_bbox = fitz.Rect(span["bbox"])
-                                if span_bbox.intersects(inst):
-                                    # 在span文本中查找old_text
-                                    if old_text in span.get("text", ""):
-                                        matched_span = span
-                                        break
+                                if span_bbox.intersects(inst) and old_text in span.get("text", ""):
+                                    matched_span = span
+                                    break
                             if matched_span:
                                 break
                         if matched_span:
                             break
-                    if matched_span:
-                        break
-                # 如果找到包含old_text的span就用它，否则用第一个intersect的span
-                final_span = matched_span
-                if not final_span:
-                    # fallback: 取第一个intersect的span
-                    for block in text_dict["blocks"]:
-                        if "lines" in block:
-                            for line in block["lines"]:
-                                for span in line["spans"]:
-                                    span_bbox = fitz.Rect(span["bbox"])
-                                    if span_bbox.intersects(inst):
-                                        final_span = span
-                                        break
-                                if final_span:
-                                    break
-                            if final_span:
-                                break
-                        if final_span:
-                            break
-                if final_span:
-                    all_replacements.append((page_num, inst.x0, inst.y0, inst.x1, inst.y1, final_span, replacement))
-                    print(f"[DEBUG] 收集替换: {old_text} -> {new_text} at page {page_num}, inst {inst}, 字号: {final_span.get('size')}, 字体: {final_span.get('font')}, span内容: {final_span.get('text')}, 原文: {extracted_text}")
-    # 按页码、y0从大到小排序，确保从下往上依次替换
-    all_replacements.sort(key=lambda x: (x[0], -x[2], -x[3]))
-    # now apply
-    for item in all_replacements:
-        page_num, x0, y0, x1, y1, span, replacement = item
-        inst = fitz.Rect(x0, y0, x1, y1)
-        page = doc[page_num]
-        old_text = replacement['old_text']
-        new_text = replacement['new_text']
-        fontname = span.get("font", "Helvetica")
-        fontsize = span.get("size", 12)
-        color = span.get("color", 0)
-        font_file = os.path.join(fonts_dir, f"{fontname}.ttf")
-        if os.path.exists(font_file):
-            try:
-                page.insert_font(fontname, fontfile=font_file)
-            except Exception:
-                pass
-        else:
-            fontname = "Helvetica"
-        # 先画白色方框覆盖所有相关span
-        text_dict = page.get_text("dict")
-        spans_to_cover = []
-        for block in text_dict["blocks"]:
-            if "lines" in block:
-                for line in block["lines"]:
-                    for s in line["spans"]:
-                        span_bbox = fitz.Rect(s["bbox"])
-                        if span_bbox.intersects(inst):
-                            if old_text in s.get("text", "") or s.get("text", "").strip() in old_text:
-                                page.draw_rect(span_bbox, color=(1,1,1), fill=(1,1,1))
-                                spans_to_cover.append(s)
-        # 只在第一个相关span插入新内容
-        if spans_to_cover:
-            s = spans_to_cover[0]
-            span_bbox = fitz.Rect(s["bbox"])
+                
+                if matched_span:
+                    fontname = matched_span.get("font", "helv")
+                    fontsize = matched_span.get("size", 12)
+                    color = matched_span.get("color", 0)
+                    
+                    font_file = os.path.join(fonts_dir, f"{fontname}.ttf")
+                    if os.path.exists(font_file):
+                        try:
+                            page.insert_font(fontname, fontfile=font_file)
+                        except:
+                            fontname = "helv"
+                    else:
+                        fontname = "helv"
+                    
+                    page_replacements.append({
+                        "rect": inst,
+                        "new_text": new_text,
+                        "fontname": fontname,
+                        "fontsize": fontsize,
+                        "color": color
+                    })
+        
+        for item in page_replacements:
+            page.add_redact_annot(item["rect"], fill=(1, 1, 1))
+        
+        page.apply_redactions()
+        
+        for item in page_replacements:
+            rect = item["rect"]
+            color = item["color"]
+            if isinstance(color, int):
+                r = ((color >> 16) & 0xFF) / 255.0
+                g = ((color >> 8) & 0xFF) / 255.0
+                b = (color & 0xFF) / 255.0
+                color = (r, g, b)
+            
             page.insert_text(
-                (span_bbox.x0, span_bbox.y1),
-                new_text,
-                fontname=s.get("font", fontname),
-                fontsize=s.get("size", fontsize),
-                color=s.get("color", color)
+                (rect.x0, rect.y1),
+                item["new_text"],
+                fontname=item["fontname"],
+                fontsize=item["fontsize"],
+                color=color
             )
-    doc.save(output_pdf)
+    
+    doc.save(output_pdf, garbage=4, deflate=True)
     doc.close()
     print(f"[INFO] 替换完成: {input_pdf} -> {output_pdf}")
 
@@ -203,12 +251,24 @@ def run_qt_gui():
     # 日志区
     log_edit = QTextEdit()
     log_edit.setReadOnly(True)
+    
+    signals = WorkerSignals()
     def log(msg):
+        signals.log.emit(msg)
+    def on_log(msg):
         log_edit.append(msg)
-        log_edit.verticalScrollBar().setValue(log_edit.verticalScrollBar().maximum())
-
+        sb = log_edit.verticalScrollBar()
+        if sb:
+            sb.setValue(sb.maximum())
+    signals.log.connect(on_log)
+    
     # 处理按钮
     start_btn = QPushButton('开始处理')
+    def on_finished():
+        start_btn.setEnabled(True)
+        log('全部处理完成!')
+    signals.finished.connect(on_finished)
+    
     def start_process():
         config_file = config_combo.currentText()
         pdf_dir = pdf_dir_edit.text()
@@ -224,6 +284,7 @@ def run_qt_gui():
         if not pdf_files:
             QMessageBox.information(window, '提示', '所选目录下没有PDF文件')
             return
+        start_btn.setEnabled(False)
         def worker():
             for fname in pdf_files:
                 input_pdf = os.path.join(pdf_dir, fname)
@@ -234,7 +295,7 @@ def run_qt_gui():
                     log(f'完成: {fname}')
                 except Exception as e:
                     log(f'失败: {fname} 错误: {e}')
-            log('全部处理完成!')
+            signals.finished.emit()
         threading.Thread(target=worker, daemon=True).start()
     start_btn.clicked.connect(start_process)
 
